@@ -34,13 +34,7 @@ SSH_BF_ENABLED=$(sudo cscli scenarios list | grep -q 'ssh-bf' && echo OK || echo
 
 # Добавление и проверка тестовой блокировки
 sudo cscli decisions add --ip 1.2.3.4 --reason "test" --duration 10m
-
-# Ожидание, пока IP появится в nftables (максимум 5 секунд)
-for i in {1..5}; do
-  sudo nft list ruleset | grep -q 1.2.3.4 && break
-  sleep 1
-done
-
+sleep 2
 DECISION_ACTIVE=$(sudo nft list ruleset | grep -q 1.2.3.4 && echo OK || echo FAIL)
 
 # Финальный отчет
