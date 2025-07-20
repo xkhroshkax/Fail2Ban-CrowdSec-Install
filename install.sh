@@ -12,7 +12,7 @@ sudo bash -c "echo -e '[x-ui]\nenabled = true\nfilter = x-ui\nport = $XUI_PORT\n
 echo -e '[sshd]\nenabled = false' | sudo tee /etc/fail2ban/jail.d/sshd.local > /dev/null
 
 # ✅ Фикс: рабочий failregex для x-ui
-echo -e '[Definition]\nfailregex = .*Failed login attempt from <HOST>.*\nignoreregex =' | sudo tee /etc/fail2ban/filter.d/x-ui.conf > /dev/null
+echo -e '[Definition]\nfailregex = ^.*wrong username: .*IP: "<HOST>".*$\nignoreregex =' | sudo tee /etc/fail2ban/filter.d/x-ui.conf > /dev/null
 
 sudo systemctl restart fail2ban
 
