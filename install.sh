@@ -10,10 +10,7 @@ XUI_PORT=$(sudo ss -ntpl | grep 'x-ui' | grep -oP ':(\d+)' | tr -d ':')
 # Настройка Fail2Ban для x-ui
 sudo bash -c "echo -e '[x-ui]\nenabled = true\nfilter = x-ui\nport = $XUI_PORT\nbackend = systemd\njournalmatch = _SYSTEMD_UNIT=x-ui.service\nfindtime = 600\nbantime = 3600\nmaxretry = 3' > /etc/fail2ban/jail.d/x-ui.conf"
 echo -e '[sshd]\nenabled = false' | sudo tee /etc/fail2ban/jail.d/sshd.local > /dev/null
-
-# ✅ Фикс: рабочий failregex для x-ui
-echo -e '[Definition]\nfailregex = ^.*wrong username: .*IP: "<HOST>".*$\nignoreregex =' | sudo tee /etc/fail2ban/filter.d/x-ui.conf > /dev/null
-
+echo -e '[Definition]\nfailregex = ^.*wrong username: .* IP: "<HOST>".*$\nignoreregex =' | sudo tee /etc/fail2ban/filter.d/x-ui.conf > /dev/null
 sudo systemctl restart fail2ban
 
 # Проверка работы Fail2Ban
@@ -35,8 +32,8 @@ CROWDSEC_STATUS=$(sudo systemctl is-active crowdsec)
 BOUNCER_STATUS=$(sudo cscli bouncers list | grep -q '✔️' && echo OK || echo FAIL)
 SSH_BF_ENABLED=$(sudo cscli scenarios list | grep -q 'ssh-bf' && echo OK || echo FAIL)
 
-# ✅ Реальный тестовый бан
-sudo cscli decisions add --ip 1.2.3.4 --duration 10m --type ban
+# Добавление и проверка тестовой блокировки
+sudo cscli decisions add --ip 1.2.3.4 --reason "test" --duration 10m
 sleep 2
 DECISION_ACTIVE=$(sudo nft list ruleset | grep -q 1.2.3.4 && echo OK || echo FAIL)
 
@@ -51,8 +48,3 @@ echo -e "🚧 Bouncer подключен:            [$BOUNCER_STATUS]"
 echo -e "📜 Сценарий ssh-bf активен:      [$SSH_BF_ENABLED]"
 echo -e "🔎 Тестовая блокировка активна: [$DECISION_ACTIVE]"
 echo -e "==============================="
-
-# Подсказка, если jail ещё не активен
-if [ "$XUI_JAIL_EXISTS" != "true" ]; then
-    echo -e "ℹ️ Jail x-ui может активироваться только после первой попытки входа в панель. Введите неправильный пароль, чтобы активировать защиту."
-fi
