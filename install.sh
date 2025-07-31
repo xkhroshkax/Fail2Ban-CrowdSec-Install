@@ -10,30 +10,29 @@ XUI_PORT=$(sudo ss -ntpl | grep 'x-ui' | grep -oP ':(\d+)' | tr -d ':')
 # Настройка Fail2Ban для x-ui
 XUI_PORT=$(sudo ss -ntpl | grep 'x-ui' | grep -oP ':(\d+)' | tr -d ':')
 
-sudo bash -c "echo -e '[x-ui]
-enabled = true
-filter = x-ui
-port = $XUI_PORT
-backend = systemd
-journalmatch = _SYSTEMD_UNIT=x-ui.service
-findtime = 60
-bantime = 3600
-maxretry = 3
-banaction = iptables-xui' > /etc/fail2ban/jail.d/x-ui.conf"
+# Создание jail-файла для x-ui
+sudo bash -c "echo -e '[x-ui]\nenabled = true\nfilter = x-ui\nport = $XUI_PORT\nbackend = systemd\njournalmatch = _SYSTEMD_UNIT=x-ui.service\nfindtime = 600\nbantime = 3600\nmaxretry = 3' > /etc/fail2ban/jail.d/x-ui.conf"
 
+# Отключаем защиту SSH, чтобы не потерять доступ
 echo -e '[sshd]\nenabled = false' | sudo tee /etc/fail2ban/jail.d/sshd.local > /dev/null
 
+# Создание фильтра для x-ui (определение неудачного входа)
 echo -e '[Definition]\nfailregex = ^.*wrong username: .* IP: "<HOST>".*$\nignoreregex =' | sudo tee /etc/fail2ban/filter.d/x-ui.conf > /dev/null
 
-sudo tee /etc/fail2ban/action.d/iptables-xui.conf > /dev/null <<EOF
+# Создание кастомного действия: бан по UFW только доступа к панели
+sudo tee /etc/fail2ban/action.d/ufw-xui-only.conf > /dev/null <<EOF
 [Definition]
 actionstart =
 actionstop =
 actioncheck =
-actionban = iptables -I INPUT -p tcp --dport <port> -s <ip> -j REJECT --reject-with icmp-port-unreachable
-actionunban = iptables -D INPUT -p tcp --dport <port> -s <ip> -j REJECT --reject-with icmp-port-unreachable
+actionban = ufw insert 1 reject from <ip> to any port <port> comment 'Fail2Ban x-ui'
+actionunban = ufw delete reject from <ip> to any port <port>
 EOF
 
+# Применяем кастомное действие к x-ui jail
+sudo sed -i '/^\[x-ui\]/,/^\[.*\]/ s/^\(banaction\s*=\s*\).*/\1ufw-xui-only/' /etc/fail2ban/jail.d/x-ui.conf || echo -e "\nbanaction = ufw-xui-only" | sudo tee -a /etc/fail2ban/jail.d/x-ui.conf > /dev/null
+
+# Перезапуск fail2ban
 sudo systemctl restart fail2ban
 
 # Имитируем ложную попытку входа в журнал systemd
