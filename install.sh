@@ -8,9 +8,30 @@ FAIL2BAN_STATUS=$?
 XUI_PORT=$(sudo ss -ntpl | grep 'x-ui' | grep -oP ':(\d+)' | tr -d ':')
 
 # Настройка Fail2Ban для x-ui
-sudo bash -c "echo -e '[x-ui]\nenabled = true\nfilter = x-ui\nport = $XUI_PORT\nbackend = systemd\njournalmatch = _SYSTEMD_UNIT=x-ui.service\nfindtime = 600\nbantime = 3600\nmaxretry = 3\nbanaction = iptables-ufw\naction = %(action_)s' > /etc/fail2ban/jail.d/x-ui.conf"
+sudo bash -c "cat > /etc/fail2ban/jail.d/x-ui.conf" <<EOF
+[x-ui]
+enabled = true
+filter = x-ui
+port = $(ss -tlnp | grep x-ui | awk '{print \$4}' | sed 's/.*://')
+backend = systemd
+journalmatch = _SYSTEMD_UNIT=x-ui.service
+findtime = 600
+bantime = 3600
+maxretry = 3
+banaction = iptables-ufw
+EOF
+
+# Отключаем jail для sshd
 echo -e '[sshd]\nenabled = false' | sudo tee /etc/fail2ban/jail.d/sshd.local > /dev/null
-echo -e '[Definition]\nfailregex = ^.*wrong username: .* IP: "<HOST>".*$\nignoreregex =' | sudo tee /etc/fail2ban/filter.d/x-ui.conf > /dev/null
+
+# Создаём фильтр для x-ui
+sudo tee /etc/fail2ban/filter.d/x-ui.conf > /dev/null <<EOF
+[Definition]
+failregex = ^.*wrong username: .* IP: "<HOST>".*$
+ignoreregex =
+EOF
+
+# Перезапуск Fail2Ban
 sudo systemctl restart fail2ban
 
 # Имитируем ложную попытку входа в журнал systemd
