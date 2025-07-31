@@ -4,6 +4,18 @@
 sudo apt update && sudo apt install -y fail2ban
 FAIL2BAN_STATUS=$?
 
+# Создание действия iptables-ufw, если отсутствует
+if [ ! -f /etc/fail2ban/action.d/iptables-ufw.conf ]; then
+  sudo tee /etc/fail2ban/action.d/iptables-ufw.conf > /dev/null <<'EOF'
+[Definition]
+actionstart = ufw allow <port>
+actionstop = ufw delete allow <port>
+actioncheck = ufw status | grep -q '<port>'
+actionban = ufw deny from <ip> to any port <port>
+actionunban = ufw delete deny from <ip> to any port <port>
+EOF
+fi
+
 # Получение порта x-ui
 XUI_PORT=$(sudo ss -ntpl | grep 'x-ui' | grep -oP ':(\d+)' | tr -d ':')
 
