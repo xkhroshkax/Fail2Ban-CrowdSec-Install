@@ -1,17 +1,62 @@
 #!/bin/bash
 
-# Установка Fail2Ban
-sudo apt update && sudo apt install -y fail2ban
+# Установка необходимых пакетов
+sudo apt update && sudo apt install -y fail2ban jq
 FAIL2BAN_STATUS=$?
 
 # Получение порта x-ui
-XUI_PORT=$(sudo ss -ntpl | grep 'x-ui' | grep -oP ':(\d+)' | tr -d ':')
+# Проверяем порт через ss, затем через config.json, если ss не сработал
+XUI_PORT=$(sudo ss -ntpl | grep 'x-ui' | grep -oP ':(\d+)' | tr -d ':' | head -1)
+if [ -z "$XUI_PORT" ]; then
+  XUI_PORT=$(jq -r '.port' /root/3x-ui/config.json 2>/dev/null)
+  if [ -z "$XUI_PORT" ] || [ "$XUI_PORT" = "null" ]; then
+    XUI_PORT=54321  # Значение по умолчанию
+    echo "Порт x-ui не найден, используется порт по умолчанию: $XUI_PORT"
+  else
+    echo "Порт x-ui найден в config.json: $XUI_PORT"
+  fi
+else
+  echo "Порт x-ui найден через ss: $XUI_PORT"
+fi
+
+# Проверка и создание лог-файла x-ui
+XUI_LOG="/root/3x-ui/access.log"
+if [ ! -f "$XUI_LOG" ]; then
+  sudo touch "$XUI_LOG"
+  sudo chown x-ui:x-ui "$XUI_LOG" 2>/dev/null || sudo chown root:root "$XUI_LOG"
+  sudo chmod 640 "$XUI_LOG"
+  echo "Лог-файл x-ui создан: $XUI_LOG"
+fi
 
 # Настройка Fail2Ban для x-ui
-sudo bash -c "echo -e '[x-ui]\nenabled = true\nfilter = x-ui\nport = $XUI_PORT\nbackend = systemd\njournalmatch = _SYSTEMD_UNIT=x-ui.service\nfindtime = 600\nbantime = 3600\nmaxretry = 3' > /etc/fail2ban/jail.d/x-ui.conf"
+sudo bash -c "cat << EOF > /etc/fail2ban/jail.d/x-ui.conf
+[x-ui]
+enabled = true
+filter = x-ui
+port = $XUI_PORT
+logpath = $XUI_LOG
+backend = polling
+findtime = 600
+bantime = 3600
+maxretry = 3
+action = iptables-multiport[name=x-ui, port=\"$XUI_PORT\", protocol=tcp]
+EOF"
+
+# Отключение SSH мониторинга
 echo -e '[sshd]\nenabled = false' | sudo tee /etc/fail2ban/jail.d/sshd.local > /dev/null
-echo -e '[Definition]\nfailregex = ^.*wrong username: .* IP: "<HOST>".*$\nignoreregex =' | sudo tee /etc/fail2ban/filter.d/x-ui.conf > /dev/null
+
+# Настройка фильтра для x-ui
+sudo bash -c "cat << EOF > /etc/fail2ban/filter.d/x-ui.conf
+[Definition]
+failregex = ^.*\"POST /xui/login HTTP/[0-1]\.[0-1]\" 401.*$
+            ^.*\"POST /panel/login HTTP/[0-1]\.[0-1]\" 401.*$
+            ^.*failed login attempt.*$
+ignoreregex =
+EOF"
+
+# Перезапуск Fail2Ban
 sudo systemctl restart fail2ban
+sleep 2  # Даем время на применение конфигурации
 
 # Проверка работы Fail2Ban
 F2B_ACTIVE=$(sudo systemctl is-active fail2ban)
@@ -23,14 +68,59 @@ curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.de
 sudo apt install -y crowdsec
 sudo apt update
 sudo apt install -y crowdsec-firewall-bouncer-iptables
+
+# Настройка парсера логов x-ui для CrowdSec
+sudo bash -c "cat << EOF > /etc/crowdsec/parsers/s02-enrich/x-ui.yaml
+name: custom/x-ui
+description: "Parser for x-ui login attempts"
+filter: "evt.Line.Module == 'file' && evt.Line.Src == '$XUI_LOG'"
+onsuccess: next_stage
+grok:
+  pattern: ^.*\"POST /(xui|panel)/login HTTP/[0-1]\.[0-1]\" 401.*$
+  apply_on: Line.Raw
+  statics:
+    - meta: log_type
+      value: x-ui_failed_login
+    - meta: source_ip
+      expression: evt.Parsed.remote_addr
+EOF"
+
+# Настройка сценария для x-ui в CrowdSec
+sudo bash -c "cat << EOF > /etc/crowdsec/scenarios/x-ui-bf.yaml
+type: leaky
+name: custom/x-ui-bf
+description: "Detect brute force attacks on x-ui panel"
+filter: "evt.Meta.log_type == 'x-ui_failed_login'"
+groupby: evt.Meta.source_ip
+capacity: 3
+leakage: 600
+duration: 3600
+blackhole: 1h
+EOF"
+
+# Регистрация парсера и сценария
+sudo cscli parsers install /etc/crowdsec/parsers/s02-enrich/x-ui.yaml
+sudo cscli scenarios install /etc/crowdsec/scenarios/x-ui-bf.yaml
+
+# Настройка bouncer
 sudo sed -i 's/mode: iptables/mode: nftables/' /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml
 sudo systemctl restart crowdsec
 sudo systemctl restart crowdsec-firewall-bouncer
+
+# Добавление источника логов в CrowdSec
+sudo cscli collections install crowdsecurity/http-logs
+sudo bash -c "cat << EOF > /etc/crowdsec/acquis.yaml
+filenames:
+  - $XUI_LOG
+labels:
+  type: x-ui
+EOF"
 
 # Проверка компонентов CrowdSec
 CROWDSEC_STATUS=$(sudo systemctl is-active crowdsec)
 BOUNCER_STATUS=$(sudo cscli bouncers list | grep -q '✔️' && echo OK || echo FAIL)
 SSH_BF_ENABLED=$(sudo cscli scenarios list | grep -q 'ssh-bf' && echo OK || echo FAIL)
+XUI_BF_ENABLED=$(sudo cscli scenarios list | grep -q 'x-ui-bf' && echo OK || echo FAIL)
 
 # Добавление и проверка тестовой блокировки
 sudo cscli decisions add --ip 1.2.3.4 --reason "test" --duration 10m
@@ -46,5 +136,6 @@ echo -e "🛡  Защита x-ui активна (порт $XUI_PORT): [$([ "$XUI
 echo -e "📦 CrowdSec установлен:          [$([ "$CROWDSEC_STATUS" == "active" ] && echo OK || echo FAIL)]"
 echo -e "🚧 Bouncer подключен:            [$BOUNCER_STATUS]"
 echo -e "📜 Сценарий ssh-bf активен:      [$SSH_BF_ENABLED]"
+echo -e "📜 Сценарий x-ui-bf активен:     [$XUI_BF_ENABLED]"
 echo -e "🔎 Тестовая блокировка активна: [$DECISION_ACTIVE]"
 echo -e "==============================="
