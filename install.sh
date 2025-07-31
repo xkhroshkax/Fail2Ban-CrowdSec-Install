@@ -12,13 +12,15 @@ sudo bash -c "cat > /etc/fail2ban/jail.d/x-ui.conf" <<EOF
 [x-ui]
 enabled = true
 filter = x-ui
-port = $(ss -tlnp | grep x-ui | awk '{print \$4}' | sed 's/.*://')
+port = $XUI_PORT
 backend = systemd
 journalmatch = _SYSTEMD_UNIT=x-ui.service
 findtime = 600
 bantime = 3600
 maxretry = 3
+polltime = 1
 banaction = iptables-ufw
+action = %(action_)s
 EOF
 
 # Отключаем jail для sshd
