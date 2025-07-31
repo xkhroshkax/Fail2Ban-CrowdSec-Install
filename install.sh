@@ -8,9 +8,32 @@ FAIL2BAN_STATUS=$?
 XUI_PORT=$(sudo ss -ntpl | grep 'x-ui' | grep -oP ':(\d+)' | tr -d ':')
 
 # Настройка Fail2Ban для x-ui
-sudo bash -c "echo -e '[x-ui]\nenabled = true\nfilter = x-ui\nport = $XUI_PORT\nbackend = systemd\njournalmatch = _SYSTEMD_UNIT=x-ui.service\nfindtime = 600\nbantime = 3600\nmaxretry = 3' > /etc/fail2ban/jail.d/x-ui.conf"
+XUI_PORT=$(sudo ss -ntpl | grep 'x-ui' | grep -oP ':(\d+)' | tr -d ':')
+
+sudo bash -c "echo -e '[x-ui]
+enabled = true
+filter = x-ui
+port = $XUI_PORT
+backend = systemd
+journalmatch = _SYSTEMD_UNIT=x-ui.service
+findtime = 60
+bantime = 3600
+maxretry = 3
+banaction = iptables-xui' > /etc/fail2ban/jail.d/x-ui.conf"
+
 echo -e '[sshd]\nenabled = false' | sudo tee /etc/fail2ban/jail.d/sshd.local > /dev/null
+
 echo -e '[Definition]\nfailregex = ^.*wrong username: .* IP: "<HOST>".*$\nignoreregex =' | sudo tee /etc/fail2ban/filter.d/x-ui.conf > /dev/null
+
+sudo tee /etc/fail2ban/action.d/iptables-xui.conf > /dev/null <<EOF
+[Definition]
+actionstart =
+actionstop =
+actioncheck =
+actionban = iptables -I INPUT -p tcp --dport <port> -s <ip> -j REJECT --reject-with icmp-port-unreachable
+actionunban = iptables -D INPUT -p tcp --dport <port> -s <ip> -j REJECT --reject-with icmp-port-unreachable
+EOF
+
 sudo systemctl restart fail2ban
 
 # Имитируем ложную попытку входа в журнал systemd
