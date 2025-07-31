@@ -81,8 +81,6 @@ grok:
   statics:
     - meta: log_type
       value: x-ui_failed_login
-    - meta: source_ip
-      expression: evt.Parsed.remote_addr
 EOF"
 
 # Настройка сценария для x-ui в CrowdSec
