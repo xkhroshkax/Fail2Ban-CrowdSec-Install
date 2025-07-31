@@ -11,8 +11,7 @@ XUI_PORT=$(sudo ss -ntpl | grep 'x-ui' | grep -oP ':(\d+)' | tr -d ':')
 XUI_PORT=$(sudo ss -ntpl | grep 'x-ui' | grep -oP ':(\d+)' | tr -d ':')
 
 # Создание jail-файла для x-ui
-sudo tee /etc/fail2ban/jail.d/x-ui.conf > /dev/null <<EOF
-[x-ui]
+sudo bash -c "echo -e '[x-ui]
 enabled = true
 filter = x-ui
 port = $XUI_PORT
@@ -21,18 +20,15 @@ journalmatch = _SYSTEMD_UNIT=x-ui.service
 findtime = 600
 bantime = 3600
 maxretry = 3
-banaction = iptables-xui
-EOF
+banaction = iptables-xui' > /etc/fail2ban/jail.d/x-ui.conf"
 
 # Отключаем защиту SSH, чтобы не потерять доступ
 echo -e '[sshd]\nenabled = false' | sudo tee /etc/fail2ban/jail.d/sshd.local > /dev/null
 
 # Создание фильтра для x-ui (определение неудачного входа)
-sudo tee /etc/fail2ban/filter.d/x-ui.conf > /dev/null <<EOF
-[Definition]
+echo -e '[Definition]
 failregex = ^.*wrong username: .* IP: "<HOST>".*$
-ignoreregex =
-EOF
+ignoreregex =' | sudo tee /etc/fail2ban/filter.d/x-ui.conf > /dev/null
 
 # Создание кастомного действия: мгновенный бан по iptables только доступа к панели
 sudo tee /etc/fail2ban/action.d/iptables-xui.conf > /dev/null <<EOF
