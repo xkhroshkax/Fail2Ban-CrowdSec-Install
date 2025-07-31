@@ -13,6 +13,16 @@ echo -e '[sshd]\nenabled = false' | sudo tee /etc/fail2ban/jail.d/sshd.local > /
 echo -e '[Definition]\nfailregex = ^.*wrong username: .* IP: "<HOST>".*$\nignoreregex =' | sudo tee /etc/fail2ban/filter.d/x-ui.conf > /dev/null
 sudo systemctl restart fail2ban
 
+# Имитируем ложную попытку входа в журнал systemd
+logger --journald <<EOF
+PRIORITY=4
+SYSLOG_IDENTIFIER=x-ui
+MESSAGE=WARNING - wrong username: "fail2ban_test", password: "invalid", IP: "127.0.0.2"
+EOF
+
+# Даём время fail2ban распарсить запись
+sleep 3
+
 # Проверка работы Fail2Ban
 F2B_ACTIVE=$(sudo systemctl is-active fail2ban)
 SSH_DISABLED=$(grep -q 'enabled = false' /etc/fail2ban/jail.d/sshd.local && echo true || echo false)
@@ -35,7 +45,7 @@ SSH_BF_ENABLED=$(sudo cscli scenarios list | grep -q 'ssh-bf' && echo OK || echo
 # Добавление и проверка тестовой блокировки
 sudo cscli decisions add --ip 1.2.3.4 --reason "test" --duration 10m
 sleep 2
-DECISION_ACTIVE=$(sudo nft list ruleset | grep -q 1.2.3.4 && echo OK || echo FAIL)
+DECISION_ACTIVE=$(sudo cscli decisions list | grep -q '1.2.3.4' && echo OK || echo FAIL)
 
 # Финальный отчет
 echo -e "\n===== ОТЧЕТ О НАСТРОЙКЕ ====="
